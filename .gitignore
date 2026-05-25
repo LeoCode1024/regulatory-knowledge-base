@@ -1,0 +1,21 @@
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Obsidian local workspace state
+.obsidian/workspace*.json
+.obsidian/cache/
+.obsidian/.trash/
+.trash/
+
+# Temporary files
+*.tmp
+*.bak
+~$*
