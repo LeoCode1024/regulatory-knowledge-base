@@ -413,6 +413,10 @@ def evidence_link(ev: Evidence, label: str | None = None) -> str:
     return f"[[{page_stem(ev.source_page)}#{ev.clause}|{label or clause_label(ev)}]]"
 
 
+def table_cell(value: str) -> str:
+    return re.sub(r"(?<!\\)\|", r"\\|", str(value)).replace("\n", " ")
+
+
 def raw_link(doc: SourceDoc) -> str:
     return slug_link(doc.raw_rel, doc.raw_rel)
 
@@ -789,7 +793,7 @@ def evidence_table(evs: list[Evidence], limit: int = 30) -> list[str]:
     lines = ["| 来源 | 条款 | 证据要点 | 主体/动作/时限 |", "| --- | --- | --- | --- |"]
     for ev in evs[:limit]:
         lines.append(
-            f"| {slug_link(ev.source_page, ev.source_title)} | {ev.clause} | {compact(ev.summary, 90)} | {'、'.join(ev.subjects[:2])}；{'、'.join(ev.actions[:3])}；{ev.time_limit} |"
+            f"| {table_cell(slug_link(ev.source_page, ev.source_title))} | {table_cell(ev.clause)} | {table_cell(compact(ev.summary, 90))} | {table_cell('、'.join(ev.subjects[:2]) + '；' + '、'.join(ev.actions[:3]) + '；' + ev.time_limit)} |"
         )
     return lines
 
@@ -839,7 +843,7 @@ def topic_page(title: str, tags: list[str], keywords: list[str], all_evidence: l
     ]
     for ev in evs[:35]:
         out.append(
-            f"| {'、'.join(ev.subjects[:3])} | {compact(ev.summary, 70)} | {'、'.join(ev.actions[:4])} | {ev.time_limit} | {slug_link(ev.source_page, ev.source_title)} {ev.clause} |"
+            f"| {table_cell('、'.join(ev.subjects[:3]))} | {table_cell(compact(ev.summary, 70))} | {table_cell('、'.join(ev.actions[:4]))} | {table_cell(ev.time_limit)} | {table_cell(slug_link(ev.source_page, ev.source_title) + ' ' + ev.clause)} |"
         )
     out += ["", "## 五、禁止事项和责任后果"]
     if redlines:
@@ -1844,7 +1848,9 @@ def rebuild() -> None:
     ]
     for ev in all_evidence:
         label = ", ".join(ev.tags[:5]) if ev.tags else "综合监管证据"
-        evidence_index.append(f"| {label} | {evidence_link(ev, ev.source_title)} | {ev.clause} | {compact(topic_statement(ev), 100)} |")
+        evidence_index.append(
+            f"| {table_cell(label)} | {table_cell(evidence_link(ev, ev.source_title))} | {table_cell(ev.clause)} | {table_cell(compact(topic_statement(ev), 100))} |"
+        )
     write(WIKI_NEW / "证据总索引.md", "\n".join(evidence_index))
 
     write(ROOT / "index.md.new", build_index(docs, all_evidence))

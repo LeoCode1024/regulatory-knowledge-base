@@ -35,8 +35,19 @@ LIST_INTRO_WORDS = [
 ]
 
 
+def split_wikilink(raw_target: str) -> tuple[str, str | None]:
+    for idx, char in enumerate(raw_target):
+        if char == "|":
+            page = raw_target[:idx]
+            if page.endswith("\\"):
+                page = page[:-1]
+            return page.strip(), raw_target[idx + 1 :].strip()
+    return raw_target.strip(), None
+
+
 def resolve_link(target: str) -> Path | None:
-    target = target.split("|", 1)[0].split("#", 1)[0].strip()
+    target, _ = split_wikilink(target)
+    target = target.split("#", 1)[0].strip()
     if not target or target.startswith(("http://", "https://", "mailto:")):
         return None
     if not target.endswith(".md"):
@@ -54,7 +65,7 @@ def files_to_check() -> list[Path]:
 
 
 def resolve_link_with_anchor(raw_target: str) -> tuple[Path | None, str | None]:
-    target = raw_target.split("|", 1)[0].strip()
+    target, _ = split_wikilink(raw_target)
     if not target or target.startswith(("http://", "https://", "mailto:")):
         return None, None
     page, sep, anchor = target.partition("#")
@@ -70,6 +81,94 @@ def heading_anchors(text: str) -> set[str]:
     for match in re.finditer(r"(?m)^#{1,6}\s+(.+?)\s*$", text):
         anchors.add(match.group(1).strip())
     return anchors
+
+
+def is_table_separator(line: str) -> bool:
+    return bool(re.match(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", line))
+
+
+def split_table_cells(line: str, *, respect_wikilinks: bool) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return []
+    inner = stripped[1:-1] if stripped.endswith("|") else stripped[1:]
+    cells: list[str] = []
+    current: list[str] = []
+    in_wikilink = 0
+    escaped = False
+    i = 0
+    while i < len(inner):
+        char = inner[i]
+        next_char = inner[i + 1] if i + 1 < len(inner) else ""
+        if escaped:
+            current.append(char)
+            escaped = False
+            i += 1
+            continue
+        if char == "\\":
+            escaped = True
+            i += 1
+            continue
+        if respect_wikilinks and char == "[" and next_char == "[":
+            in_wikilink += 1
+            current.extend((char, next_char))
+            i += 2
+            continue
+        if respect_wikilinks and char == "]" and next_char == "]" and in_wikilink:
+            in_wikilink -= 1
+            current.extend((char, next_char))
+            i += 2
+            continue
+        if char == "|" and not in_wikilink:
+            cells.append("".join(current).strip())
+            current = []
+            i += 1
+            continue
+        current.append(char)
+        i += 1
+    cells.append("".join(current).strip())
+    return cells
+
+
+def find_table_issues(files: list[Path]) -> list[str]:
+    placeholders = {"待填", "待检查"}
+    issues: list[str] = []
+    for file in files:
+        text = file.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        idx = 0
+        while idx < len(lines) - 1:
+            if not lines[idx].strip().startswith("|") or not is_table_separator(lines[idx + 1]):
+                idx += 1
+                continue
+
+            rel = file.relative_to(ROOT)
+            header = split_table_cells(lines[idx], respect_wikilinks=False)
+            logical_header = split_table_cells(lines[idx], respect_wikilinks=True)
+            width = len(header)
+
+            if any(not cell for cell in header):
+                issues.append(f"{rel}:{idx + 1} table_blank_header")
+            if len(header) != len(logical_header):
+                issues.append(f"{rel}:{idx + 1} table_unescaped_wikilink_pipe")
+
+            row_idx = idx + 2
+            while row_idx < len(lines) and lines[row_idx].strip().startswith("|"):
+                raw_cells = split_table_cells(lines[row_idx], respect_wikilinks=False)
+                logical_cells = split_table_cells(lines[row_idx], respect_wikilinks=True)
+                if len(raw_cells) != len(logical_cells):
+                    issues.append(f"{rel}:{row_idx + 1} table_unescaped_wikilink_pipe")
+                if len(raw_cells) != width:
+                    issues.append(f"{rel}:{row_idx + 1} table_width_mismatch")
+                for cell in logical_cells:
+                    if cell in placeholders:
+                        issues.append(f"{rel}:{row_idx + 1} table_placeholder_cell={cell}")
+                    if cell == "":
+                        issues.append(f"{rel}:{row_idx + 1} table_blank_cell")
+                row_idx += 1
+
+            idx = row_idx
+    return issues
 
 
 def find_missing_anchors(files: list[Path]) -> list[tuple[Path, str]]:
@@ -203,6 +302,7 @@ def main() -> int:
     enumeration_losses = find_enumeration_losses()
     missing_anchors = find_missing_anchors(checked_files)
     generic_topic_warnings = find_topic_generic_warnings()
+    table_issues = find_table_issues(checked_files)
 
     print(f"raw_count={raw_count}")
     print(f"source_page_count={source_count}")
@@ -211,6 +311,7 @@ def main() -> int:
     print(f"broken_link_count={len(broken)}")
     print(f"missing_anchor_count={len(missing_anchors)}")
     print(f"line_reference_count={len(line_refs)}")
+    print(f"table_issue_count={len(table_issues)}")
     print(f"chairman_weak_hit_count={len(weak_hits)}")
     print(f"enumeration_loss_count={len(enumeration_losses)}")
     print(f"topic_generic_warning_page_count={len(generic_topic_warnings)}")
@@ -230,6 +331,10 @@ def main() -> int:
     if line_refs:
         for file in line_refs[:20]:
             print(f"line_reference: {file}")
+        return 1
+    if table_issues:
+        for issue in table_issues[:20]:
+            print(f"table_issue: {issue}")
         return 1
     if weak_hits:
         return 1
